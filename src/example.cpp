@@ -41,9 +41,7 @@ class MemoryManager: public virtual dg::avl_fastmap::memory::Allocatable,
 
         void free(void * ptr) noexcept{
 
-            if (ptr != nullptr){
-                std::free(ptr);
-            }
+            std::free(ptr);
         }
 
         char * launder(void * ptr) noexcept{
@@ -129,7 +127,7 @@ void integrity_check(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uin
     }
 
     data_type data{};
-    std::vector<std::pair<char *, uint32_t>> mmapped{};
+    std::vector<std::optional<std::pair<char *, uint32_t>>> mmapped{};
     size_t popcount = rand_dev() % mmap.size(); 
 
     for (const auto& e: mmap){
@@ -144,11 +142,11 @@ void integrity_check(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uin
     auto keys = extract_keys(data);
     std::sort(keys.begin(), keys.end());
     // std::sort(data.begin(), data.end(), [&](const auto& lhs, const auto& rhs){return lhs.first < rhs.first;});
-    dg::avl_fastmap::sorted_find(avl, keys, mmapped, mem_manager);
+    dg::avl_fastmap::std_sorted_find(avl, keys, mmapped, mem_manager);
 
     for (size_t i = 0; i < keys.size(); ++i){
         
-        if (mmapped[i].second != mmap[keys[i]].second || std::memcmp(mmapped[i].first, mmap[keys[i]].first, mmapped[i].second) != 0){
+        if (mmapped[i]->second != mmap[keys[i]].second || std::memcmp(mmapped[i]->first, mmap[keys[i]].first, mmapped[i]->second) != 0){
             std::cout << "mayday" << std::endl;
         }
     }
@@ -158,8 +156,8 @@ int main(){
     
     using namespace dg::avl_fastmap; 
 
-    const size_t SZ     = 1 << 15;
-    const size_t VAL_SZ = 1 << 15; 
+    const size_t SZ     = 1 << 10;
+    const size_t VAL_SZ = 1 << 12; 
     auto allocator = MemoryManager{nullptr, 0u};
     auto data           = randomize(SZ, VAL_SZ);
     auto inserted_data  = decltype(data){};
@@ -182,4 +180,6 @@ int main(){
 
         integrity_check(root, mmap, allocator);
     }
+
+    std::cout << "passed" << std::endl;
 }

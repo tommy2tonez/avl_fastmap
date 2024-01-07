@@ -1,5 +1,6 @@
 #ifndef __AVL_FASTMAP_CONTAINER_H___
 #define __AVL_FASTMAP_CONTAINER_H___
+
 #include <stdint.h>
 #include <vector>
 #include <memory>
@@ -8,7 +9,9 @@
 #include <functional>
 #include "serialization.h"
 #include <string>
-#include <iterator>
+#include <random>
+#include <iostream>
+#include <optional>
 
 namespace dg::avl_fastmap::types{
 
@@ -95,7 +98,6 @@ namespace dg::avl_fastmap::basic_operation{
             return none;
         }
         
-        //REVIEW: may or may not be optimized - need profiling
         if (balance_idx > 0){
             if (get_balance_idx_at(root->r) < 0){
                 return rl;
@@ -191,8 +193,9 @@ namespace dg::avl_fastmap::basic_operation{
 
     //optimizable
     auto recursive_balance_at(model::Node * root) noexcept -> model::Node *{
-        
+
         while (true){
+
             auto prev   = root; 
             root        = balance_at(root);
 
@@ -242,6 +245,7 @@ namespace dg::avl_fastmap::utility{
             auto rs = [&]<size_t ...IDX>(const std::index_sequence<IDX...>){
                 using ret_type   = decltype(functor(std::forward<AArgs>(aargs)..., std::get<IDX>(tup)...));
                 if constexpr(std::is_same_v<ret_type, void>){
+                    functor(std::forward<AArgs>(aargs)..., std::get<IDX>(tup)...);
                     return NoRet{};
                 } else{
                     return functor(std::forward<AArgs>(aargs)..., std::get<IDX>(tup)...);
@@ -288,7 +292,7 @@ namespace dg::avl_fastmap::crud{
             return root;
         }
 
-        auto less   = [](model::Node * lhs, model::Node * rhs){return lhs->k < rhs->k;}; //REVIEW: 2 dereferences 
+        auto less   = [](model::Node * lhs, model::Node * rhs) noexcept{return lhs->k < rhs->k;};
         auto mid    = std::lower_bound(first, last, root, less);
         root->l     = insert(root->l, first, mid);
         root->r     = insert(root->r, mid, last);
@@ -318,21 +322,17 @@ namespace dg::avl_fastmap::crud{
             return basic_operation::balance_at(root);
         }
 
-        bool has_l      = bool{root->l};
-        bool has_r      = bool{root->r};
-        bool is_leaf    = !has_l && !has_r;
-
         if (is_initial){
             removed_node = root;
         }
 
-        if (is_leaf){
+        if (!bool{root->l} && !bool{root->r}){
             return {};
         }
 
         model::Node * candidate{};
 
-        if (has_l){   
+        if (root->l){   
             candidate       = basic_operation::to_max_right(root->l);
             candidate->l    = del(root->l, candidate->k, false, removed_node);
             candidate->r    = root->r;
@@ -356,31 +356,25 @@ namespace dg::avl_fastmap::crud{
         }
 
         auto key    = std::pair<key_type, bool>{root->k, false};
-        auto less   = [](const auto& lhs, const auto& rhs){return lhs.first < rhs.first;};
+        auto less   = [](const auto& lhs, const auto& rhs) noexcept{return lhs.first < rhs.first;};
         auto mid    = std::lower_bound(first, last, key, less);
-        auto is_hit = (mid != last) && (mid->first == root->k);
 
-        if (!is_hit){
+        if (mid == last || mid->first != root->k){
             root->l = del(root->l, first, mid, removed_nodes);
             root->r = del(root->r, mid, last, removed_nodes);
             basic_operation::update_height_at(root);
             return basic_operation::recursive_balance_at(root);
         }
 
-        bool has_l      = bool{root->l};
-        bool has_r      = bool{root->r};
-        bool is_leaf    = !has_l && !has_r;
-        bool del_flag   = mid->second;
-
-        if (del_flag){
+        if (mid->second){
             *(removed_nodes++) = root;
         }
 
-        if (is_leaf){
+        if (!bool{root->l} && !bool{root->r}){
             return {};
         } 
 
-        if (has_l){
+        if (root->l){
             auto cand               = basic_operation::to_max_right(root->l);
             auto is_optimizable     = std::distance(first, mid) > 0 && (std::prev(mid)->first != cand->k);
 
@@ -410,8 +404,35 @@ namespace dg::avl_fastmap::crud{
         return del(basic_operation::recursive_balance_at(root), mid->first, mid->second, *(removed_nodes++));
     }
     
+    void nullable_find(model::Node * root, 
+                       const key_type * first,
+                       const key_type * last,
+                       model::Node **& vals) noexcept{
+
+        if (std::distance(first, last) < 1){
+            return;
+        }
+                
+        if (!root){
+            vals = std::transform(first, last, vals, [](...) noexcept{return nullptr;});
+            return;
+        }
+
+        auto mid = std::lower_bound(first, last, root->k);
+
+        if (mid != last && *mid == root->k){
+            nullable_find(root->l, first, mid, vals);
+            *(vals++) = root;
+            nullable_find(root->r, std::next(mid), last, vals);
+            return;
+        } 
+
+        nullable_find(root->l, first, mid, vals);
+        nullable_find(root->r, mid, last, vals);
+    }
+
     void find(model::Node * root, 
-              key_type *& sorted_keys, 
+              const key_type *& sorted_keys, 
               model::Node **& vals,
               key_type l_bound,
               key_type r_bound) noexcept{
@@ -425,7 +446,7 @@ namespace dg::avl_fastmap::crud{
         }
 
         auto is_hit     = *sorted_keys ^ root->k;
-        *vals           = root;
+        *vals           = root; //
         sorted_keys     += (is_hit == 0);
         vals            += (is_hit == 0);
 
@@ -561,6 +582,15 @@ namespace dg::avl_fastmap::node_controller{
         buffer_encoding::decode(v_addr, mapped);
 
         return mapped;
+    }
+
+    auto nullable_extract_val(model::Node * node, memory::CharLaunderable& launderer) noexcept -> std::optional<mapped_type>{
+
+        if (!node){
+            return std::nullopt;
+        }
+
+        return extract_val(node, launderer);
     } 
 
     void del(model::Node * node, memory::Allocatable& allocator) noexcept{
@@ -579,7 +609,7 @@ namespace dg::avl_fastmap::node_controller{
         std::fill(nodes.get(), nodes.get() + sz, nullptr);
 
         auto lmaker = [&]<class Maker>(Maker& maker, size_t first, size_t last) -> model::Node *{
-            if (last - first == 0u){
+            if (last == first){
                 return {};
             }
 
@@ -629,13 +659,14 @@ namespace dg::avl_fastmap{
         return {};
     } 
 
-    auto size(model::Node * root){
+    auto size(model::Node * root) noexcept{
 
         size_t count{};
-        crud::post_order_traversal(root, [&](...){++count;});
+        crud::post_order_traversal(root, [&](...) noexcept{++count;});
         return count;
     }
 
+    //non-existing-key
     auto sorted_insert(model::Node * root, 
                        const std::vector<std::pair<key_type, const_mapped_type>>& kvs, 
                        memory::Allocatable& allocator, 
@@ -691,6 +722,7 @@ namespace dg::avl_fastmap{
         return root;
     }
 
+    //existing keys within (MINIMUM_KEY, MAXIMUM_KEY)
     void sorted_find(model::Node * root, 
                      const std::vector<key_type>& keys,
                      std::vector<mapped_type>& vals,
@@ -702,13 +734,24 @@ namespace dg::avl_fastmap{
 
         {
             auto kkeys      = std::make_unique<key_type[]>(sz);
-            auto kkeys_ptr  = kkeys.get();
+            auto kkeys_ptr  = static_cast<const key_type *>(kkeys.get());
             std::memcpy(kkeys.get(), keys.data(), static_cast<size_t>(sizeof(key_type)) * keys.size());
             kkeys[keys.size()] = constants::MAXIMUM_KEY; 
             crud::find(root, kkeys_ptr, nodes_ptr, constants::MINIMUM_KEY, constants::MAXIMUM_KEY);
         }
         
         std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), utility::bind_back(node_controller::extract_val, launderer));
+    }
+
+    void std_sorted_find(model::Node * root, 
+                         const std::vector<key_type>& keys, 
+                         std::vector<std::optional<mapped_type>>& vals, 
+                         memory::CharLaunderable& launderer){
+        
+        auto nodes      = std::make_unique<std::add_pointer_t<model::Node>[]>(keys.size());
+        auto nodes_ptr  = nodes.get();
+        crud::nullable_find(root, keys.data(), keys.data() + keys.size(), nodes_ptr);
+        std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), utility::bind_back(node_controller::nullable_extract_val, launderer));
     }
 }
 
