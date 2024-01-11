@@ -12,10 +12,11 @@
 #include <random>
 #include <iostream>
 #include <optional>
+#include <array>
 
 namespace dg::avl_fastmap::types{
 
-    using allocation_order_type     = uint8_t;
+    using traversal_order_type      = uint8_t;
     using buffer_len_type           = uint32_t;
     using buffer_view               = std::pair<char *, buffer_len_type>;
     using immutable_buffer_view     = std::pair<const char *, buffer_len_type>; 
@@ -31,10 +32,11 @@ namespace dg::avl_fastmap::constants{
 
     using namespace avl_fastmap::types;
 
-    static inline constexpr auto MINIMUM_KEY    = std::numeric_limits<key_type>::min();
-    static inline constexpr auto MAXIMUM_KEY    = std::numeric_limits<key_type>::max();
+    static inline constexpr size_t MINIMUM_KEY    = std::numeric_limits<key_type>::min();
+    static inline constexpr size_t MAXIMUM_KEY    = std::numeric_limits<key_type>::max();
+    static inline constexpr size_t MAXIMUM_DEPTH  = 35;
 
-    enum allocation_order_options: allocation_order_type{
+    enum traversal_order_options: traversal_order_type{
         preorder,
         inorder,
         postorder
@@ -219,8 +221,10 @@ namespace dg::avl_fastmap::utility{
     template <class Executable>
     auto get_backout_executor(Executable executor) noexcept{
 
+        static_assert(noexcept(executor()));
+
         static int guard    = 0u;
-        auto destructor     = [=](int *){executor();};
+        auto destructor     = [=](int *) noexcept {executor();};
         
         return std::unique_ptr<int, decltype(destructor)>(&guard, destructor);
     }
@@ -242,7 +246,7 @@ namespace dg::avl_fastmap::utility{
         auto tup = std::forward_as_tuple(std::forward<Args>(args)...); 
 
         auto rs  = [=]<class ...AArgs>(AArgs&& ...aargs){
-            auto rs = [&]<size_t ...IDX>(const std::index_sequence<IDX...>){
+            auto rrs = [&]<size_t ...IDX>(const std::index_sequence<IDX...>){
                 using ret_type   = decltype(functor(std::forward<AArgs>(aargs)..., std::get<IDX>(tup)...));
                 if constexpr(std::is_same_v<ret_type, void>){
                     functor(std::forward<AArgs>(aargs)..., std::get<IDX>(tup)...);
@@ -252,8 +256,8 @@ namespace dg::avl_fastmap::utility{
                 }
             }(std::make_index_sequence<sizeof...(Args)>());
 
-            if constexpr(!std::is_same_v<decltype(rs), NoRet>){
-                return rs;
+            if constexpr(!std::is_same_v<decltype(rrs), NoRet>){
+                return rrs;
             }
         };
 
@@ -478,6 +482,18 @@ namespace dg::avl_fastmap::crud{
         visitor(root);
         in_order_traversal(root->r, visitor);
     }
+
+    template <class Visitor>
+    void pre_order_traversal(model::Node * root, Visitor&& visitor) noexcept(noexcept(visitor(root))){
+
+        if (!root){
+            return;
+        }
+
+        visitor(root);
+        pre_order_traversal(root->l, visitor);
+        pre_order_traversal(root->r, visitor);
+    }
 }
 
 namespace dg::avl_fastmap::buffer_encoding{
@@ -598,8 +614,8 @@ namespace dg::avl_fastmap::node_controller{
         allocator.free(static_cast<void *>(node));
     }
 
-    template <allocation_order_type allocation_order>
-    auto make(const std::vector<std::pair<key_type, const_mapped_type>>& kvs, memory::Allocatable& allocator, const std::integral_constant<allocation_order_type, allocation_order>) -> std::unique_ptr<std::add_pointer_t<model::Node>[]>{
+    template <traversal_order_type allocation_order>
+    auto make(const std::vector<std::pair<key_type, const_mapped_type>>& kvs, memory::Allocatable& allocator, const std::integral_constant<traversal_order_type, allocation_order>) -> std::unique_ptr<std::add_pointer_t<model::Node>[]>{
 
         auto sz             = size_t{kvs.size()};
         auto nodes          = std::make_unique<std::add_pointer_t<model::Node>[]>(sz);
@@ -643,8 +659,130 @@ namespace dg::avl_fastmap::node_controller{
     }
 }
 
+namespace dg::avl_fastmap::iterator_base{
+
+    using backtrack_array = std::pair<std::array<model::Node *, constants::MAXIMUM_DEPTH>, size_t>; 
+
+    auto size(backtrack_array& arr) noexcept{
+
+        return arr.second;
+    }
+
+    void push_back(backtrack_array& arr, model::Node * node) noexcept{
+
+        arr.first[arr.second++] = node;
+    }
+
+    void pop_back(backtrack_array& arr) noexcept{
+    
+        --arr.second;
+    }
+
+    auto back(backtrack_array& arr) noexcept -> model::Node *{
+
+        return arr.first[arr.second - 1];
+    } 
+
+    auto equal(const backtrack_array& lhs, const backtrack_array& rhs) noexcept -> bool{
+
+        if (lhs.second != rhs.second){
+            return false;
+        }
+
+        return std::memcmp(lhs.first.data(), rhs.first.data(), lhs.second * sizeof(model::Node *)) == 0;
+    }
+}
+
+namespace dg::avl_fastmap::inorder_iterator{
+    
+    using namespace avl_fastmap::types;
+    using namespace avl_fastmap::iterator_base;
+
+    class iterator{
+
+        private:
+
+            backtrack_array trace;
+            memory::CharLaunderable * launderer; 
+
+        public:
+
+            iterator(backtrack_array trace,
+                     memory::CharLaunderable * launderer) noexcept: trace(trace),
+                                                                    launderer(launderer){}
+
+            iterator& operator ++() noexcept{
+
+                increment();
+                return *this;
+            }
+
+            bool operator != (const iterator& other) noexcept{
+                
+                return !equal(this->trace, other.trace);
+            }
+
+            std::pair<key_type, mapped_type> operator *() noexcept{
+                
+                return {back(this->trace)->k, node_controller::extract_val(back(this->trace), *launderer)};
+            }
+
+        private:
+
+            void increment() noexcept{ 
+
+                if (size(trace) == 0u){
+                    return;
+                }
+
+                if (back(trace)->r){
+                    push_back(trace, back(trace)->r);
+                    while (back(trace)->l){
+                        push_back(trace, back(trace)->l);
+                    }
+                    return;
+                }
+
+                while (size(trace) != 1u){
+
+                    auto cur = back(trace);
+                    pop_back(trace);
+                    auto par = back(trace);
+
+                    if (par->l == cur){
+                        return;
+                    }
+                }
+
+                pop_back(trace);
+            }
+    };
+
+    auto end() noexcept -> iterator{
+
+        return iterator{{}, {}};
+    }
+
+    auto begin(model::Node * root, memory::CharLaunderable& launderer) noexcept -> iterator{
+
+        if (!root){
+            return end();
+        }
+
+        auto trace = backtrack_array{};
+        push_back(trace, root);
+
+        while (back(trace)->l){
+            push_back(trace, back(trace)->l);
+        }
+        
+        return iterator(trace, &launderer);
+    }
+} 
+
 namespace dg::avl_fastmap{
 
+    //minimum viable product - this interface suffices for most usecases 
     using namespace avl_fastmap::types; 
     using namespace avl_fastmap::constants;
 
@@ -670,22 +808,22 @@ namespace dg::avl_fastmap{
     auto sorted_insert(model::Node * root, 
                        const std::vector<std::pair<key_type, const_mapped_type>>& kvs, 
                        memory::Allocatable& allocator, 
-                       allocation_order_type allocation_order = preorder) -> model::Node *{
+                       traversal_order_type allocation_order = preorder) -> model::Node *{
         
         auto nodes  = std::unique_ptr<std::add_pointer_t<model::Node>[]>{}; 
 
         switch (allocation_order){
             
             case constants::preorder:
-                nodes   = node_controller::make(kvs, allocator, std::integral_constant<allocation_order_type, constants::preorder>{});
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::preorder>{});
                 break;
             
             case constants::inorder:
-                nodes   = node_controller::make(kvs, allocator, std::integral_constant<allocation_order_type, constants::inorder>{});
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::inorder>{});
                 break;
 
             case constants::postorder:
-                nodes   = node_controller::make(kvs, allocator, std::integral_constant<allocation_order_type, constants::postorder>{});
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::postorder>{});
                 break;
 
             default:
@@ -752,6 +890,39 @@ namespace dg::avl_fastmap{
         auto nodes_ptr  = nodes.get();
         crud::nullable_find(root, keys.data(), keys.data() + keys.size(), nodes_ptr);
         std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), utility::bind_back(node_controller::nullable_extract_val, launderer));
+    }
+
+    template <class Visitor>
+    auto visit(model::Node * root, Visitor visitor, memory::CharLaunderable& launderer, traversal_order_type traversal_order = preorder) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
+
+        auto liaison = [visitor, &launderer](model::Node * root) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
+            visitor(root->k, node_controller::extract_val(root, launderer));
+        };
+
+        switch (traversal_order){
+            case preorder:
+                crud::pre_order_traversal(root, liaison);
+                break;
+            case inorder:
+                crud::in_order_traversal(root, liaison);
+                break;
+            case postorder:
+                crud::post_order_traversal(root, liaison);
+                break;
+            default:
+                std::abort();
+                break;
+        }
+    } 
+
+    auto begin(model::Node * root, memory::CharLaunderable& launderer) noexcept -> inorder_iterator::iterator{
+
+        return inorder_iterator::begin(root, launderer);
+    }
+
+    auto end() noexcept -> inorder_iterator::iterator{
+
+        return inorder_iterator::end();
     }
 }
 

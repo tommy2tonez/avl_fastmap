@@ -150,13 +150,32 @@ void integrity_check(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uin
             std::cout << "mayday" << std::endl;
         }
     }
+
+    size_t iter_sz = 0u;
+
+    for (auto iter = dg::avl_fastmap::begin(avl, mem_manager); iter != dg::avl_fastmap::end(); ++iter){
+
+        auto cur = *iter;
+        iter_sz++;    
+        if (mmap.find(cur.first) == mmap.end()){
+            std::cout << "mayday" << std::endl;
+        }
+
+        if (cur.second.second != mmap[cur.first].second || std::memcmp(cur.second.first, mmap[cur.first].first, cur.second.second) != 0){
+            std::cout << "mayday" << std::endl;
+        } 
+    }
+
+    if (iter_sz != mmap.size()){
+        std::cout << "mayday" << std::endl;
+    }
 }
 
 int main(){
-    
+
     using namespace dg::avl_fastmap; 
 
-    const size_t SZ     = 1 << 10;
+    const size_t SZ     = 1 << 20;
     const size_t VAL_SZ = 1 << 12; 
     auto allocator = MemoryManager{nullptr, 0u};
     auto data           = randomize(SZ, VAL_SZ);
