@@ -22,8 +22,7 @@ auto timeit(Executable exe) -> size_t{
     return l;
 }
 
-class MemoryManager: public virtual dg::avl_fastmap::memory::Allocatable,
-                     public virtual dg::avl_fastmap::memory::CharLaunderable{
+class MemoryManager: public virtual dg::avl_fastmap::memory::Allocatable{
 
     private:    
 
@@ -42,11 +41,6 @@ class MemoryManager: public virtual dg::avl_fastmap::memory::Allocatable,
         void free(void * ptr) noexcept{
 
             std::free(ptr);
-        }
-
-        char * launder(void * ptr) noexcept{
-
-            return static_cast<char *>(ptr);
         }
 };
 
@@ -92,7 +86,7 @@ auto random_split(const data_type& vec) -> std::pair<data_type, data_type>{
 
 void insert(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uint64_t, std::pair<const char *, uint32_t>>& mmap, const data_type& inserting_data, MemoryManager& mem_manager){
 
-    avl = dg::avl_fastmap::sorted_insert(avl, inserting_data, mem_manager);
+    avl = dg::avl_fastmap::sorted_replace_insert(avl, inserting_data, mem_manager);
     
     for (const auto& e: inserting_data){
         mmap[e.first] = e.second;
@@ -142,7 +136,7 @@ void integrity_check(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uin
     auto keys = extract_keys(data);
     std::sort(keys.begin(), keys.end());
     // std::sort(data.begin(), data.end(), [&](const auto& lhs, const auto& rhs){return lhs.first < rhs.first;});
-    dg::avl_fastmap::std_sorted_find(avl, keys, mmapped, mem_manager);
+    dg::avl_fastmap::std_sorted_find(avl, keys, mmapped);
 
     for (size_t i = 0; i < keys.size(); ++i){
         
@@ -153,7 +147,7 @@ void integrity_check(dg::avl_fastmap::model::Node *& avl, std::unordered_map<uin
 
     size_t iter_sz = 0u;
 
-    for (auto iter = dg::avl_fastmap::begin(avl, mem_manager); iter != dg::avl_fastmap::end(); ++iter){
+    for (auto iter = dg::avl_fastmap::begin(avl); iter != dg::avl_fastmap::end(); ++iter){
 
         auto cur = *iter;
         iter_sz++;    

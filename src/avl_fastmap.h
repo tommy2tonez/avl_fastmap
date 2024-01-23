@@ -34,7 +34,7 @@ namespace dg::avl_fastmap::constants{
 
     static inline constexpr size_t MINIMUM_KEY    = std::numeric_limits<key_type>::min();
     static inline constexpr size_t MAXIMUM_KEY    = std::numeric_limits<key_type>::max();
-    static inline constexpr size_t MAXIMUM_DEPTH  = 35;
+    static inline constexpr size_t MAXIMUM_DEPTH  = 64;
 
     enum traversal_order_options: traversal_order_type{
         preorder,
@@ -62,11 +62,6 @@ namespace dg::avl_fastmap::memory{
         virtual char * malloc(size_t) = 0;
         virtual void free(void *) noexcept = 0; 
     };
-
-    struct CharLaunderable{
-        virtual ~CharLaunderable() noexcept{}
-        virtual char * launder(void *) noexcept = 0;
-    };
 }
 
 //---
@@ -84,7 +79,7 @@ namespace dg::avl_fastmap::basic_operation{
 
     auto get_nullable_height_at(model::Node * root) noexcept -> height_type{
 
-        return !bool{root} ? 0u: root->h;
+        return !static_cast<bool>(root) ? 0u: root->h;
     }
     
     auto get_balance_idx_at(model::Node * root) noexcept -> balance_idx_type{
@@ -117,12 +112,12 @@ namespace dg::avl_fastmap::basic_operation{
 
     auto to_max_right(model::Node * root) noexcept -> model::Node *{
         
-        return bool{root->r} ? to_max_right(root->r): root;
+        return static_cast<bool>(root->r) ? to_max_right(root->r): root;
     }
 
     auto to_max_left(model::Node * root) noexcept -> model::Node *{
 
-        return bool{root->l} ? to_max_left(root->l): root;
+        return static_cast<bool>(root->l) ? to_max_left(root->l): root;
     }
 
     void update_height_at(model::Node * root) noexcept{
@@ -303,7 +298,34 @@ namespace dg::avl_fastmap::crud{
         basic_operation::update_height_at(root);
         
         return basic_operation::recursive_balance_at(root);
-    }
+    } 
+
+    auto replace_insert(model::Node * root, model::Node ** first, model::Node ** last, model::Node **& del_nodes) noexcept -> model::Node *{
+
+        if (!root){
+            return heapify(first, last);
+        }
+
+        if (std::distance(first, last) < 1){
+            return root;
+        }
+
+        auto less   = [](model::Node * lhs, model::Node * rhs) noexcept{return lhs->k < rhs->k;};
+        auto mid    = std::lower_bound(first, last, root, less);
+        
+        if (mid == last || (*mid)->k != root->k){
+            root->l         = replace_insert(root->l, first, mid, del_nodes);
+            root->r         = replace_insert(root->r, mid, last, del_nodes);
+        } else{
+            *(del_nodes++)  = root;
+            (*mid)->l       = replace_insert(root->l, first, mid, del_nodes);
+            (*mid)->r       = replace_insert(root->r, std::next(mid), last, del_nodes);
+            root            = *mid;
+        }
+
+        basic_operation::update_height_at(root);
+        return basic_operation::recursive_balance_at(root);
+    } 
 
     auto del(model::Node * root, 
              key_type removing_key, 
@@ -330,7 +352,7 @@ namespace dg::avl_fastmap::crud{
             removed_node = root;
         }
 
-        if (!bool{root->l} && !bool{root->r}){
+        if (!static_cast<bool>(root->l) && !static_cast<bool>(root->r)){
             return {};
         }
 
@@ -355,7 +377,7 @@ namespace dg::avl_fastmap::crud{
              std::pair<key_type, bool> * last,
              model::Node **& removed_nodes) noexcept -> model::Node *{
 
-        if (!bool{root} || std::distance(first, last) < 1){
+        if (!static_cast<bool>(root) || std::distance(first, last) < 1){
             return root;
         }
 
@@ -374,7 +396,7 @@ namespace dg::avl_fastmap::crud{
             *(removed_nodes++) = root;
         }
 
-        if (!bool{root->l} && !bool{root->r}){
+        if (!static_cast<bool>(root->l) && !static_cast<bool>(root->r)){
             return {};
         } 
 
@@ -590,23 +612,22 @@ namespace dg::avl_fastmap::node_controller{
         return rs;
     }
 
-    auto extract_val(model::Node * node, memory::CharLaunderable& launderer) noexcept -> mapped_type{
+    auto extract_val(model::Node * node) noexcept -> mapped_type{
 
-        char * node_addr    = launderer.launder(static_cast<void *>(node));
-        char * v_addr       = node_addr + sizeof(model::Node); 
+        char * v_addr       = reinterpret_cast<char *>(node) + sizeof(model::Node); 
         mapped_type mapped  = {};
         buffer_encoding::decode(v_addr, mapped);
 
         return mapped;
     }
 
-    auto nullable_extract_val(model::Node * node, memory::CharLaunderable& launderer) noexcept -> std::optional<mapped_type>{
+    auto nullable_extract_val(model::Node * node) noexcept -> std::optional<mapped_type>{
 
         if (!node){
             return std::nullopt;
         }
 
-        return extract_val(node, launderer);
+        return extract_val(node);
     } 
 
     void del(model::Node * node, memory::Allocatable& allocator) noexcept{
@@ -703,13 +724,10 @@ namespace dg::avl_fastmap::inorder_iterator{
         private:
 
             backtrack_array trace;
-            memory::CharLaunderable * launderer; 
 
         public:
 
-            iterator(backtrack_array trace,
-                     memory::CharLaunderable * launderer) noexcept: trace(trace),
-                                                                    launderer(launderer){}
+            iterator(backtrack_array trace) noexcept: trace(trace){}
 
             iterator& operator ++() noexcept{
 
@@ -724,7 +742,7 @@ namespace dg::avl_fastmap::inorder_iterator{
 
             std::pair<key_type, mapped_type> operator *() noexcept{
                 
-                return {back(this->trace)->k, node_controller::extract_val(back(this->trace), *launderer)};
+                return {back(this->trace)->k, node_controller::extract_val(back(this->trace))};
             }
 
         private:
@@ -760,10 +778,10 @@ namespace dg::avl_fastmap::inorder_iterator{
 
     auto end() noexcept -> iterator{
 
-        return iterator{{}, {}};
+        return iterator{{}};
     }
 
-    auto begin(model::Node * root, memory::CharLaunderable& launderer) noexcept -> iterator{
+    auto begin(model::Node * root) noexcept -> iterator{
 
         if (!root){
             return end();
@@ -776,7 +794,7 @@ namespace dg::avl_fastmap::inorder_iterator{
             push_back(trace, back(trace)->l);
         }
         
-        return iterator(trace, &launderer);
+        return iterator(trace);
     }
 } 
 
@@ -834,6 +852,40 @@ namespace dg::avl_fastmap{
         return crud::insert(root, nodes.get(), nodes.get() + kvs.size());
     }
     
+    auto sorted_replace_insert(model::Node * root, 
+                               const std::vector<std::pair<key_type, const_mapped_type>>& kvs, 
+                               memory::Allocatable& allocator, 
+                               traversal_order_type allocation_order = preorder) -> model::Node *{
+        
+        auto nodes          = std::unique_ptr<std::add_pointer_t<model::Node>[]>{}; 
+        auto rm_nodes       = std::make_unique<std::add_pointer_t<model::Node>[]>(kvs.size());
+        auto rm_nodes_head  = rm_nodes.get();
+
+        switch (allocation_order){
+            
+            case constants::preorder:
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::preorder>{});
+                break;
+            
+            case constants::inorder:
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::inorder>{});
+                break;
+
+            case constants::postorder:
+                nodes   = node_controller::make(kvs, allocator, std::integral_constant<traversal_order_type, constants::postorder>{});
+                break;
+
+            default:
+                std::abort();
+                break; 
+        };
+
+        root = crud::replace_insert(root, nodes.get(), nodes.get() + kvs.size(), rm_nodes_head);
+        std::for_each(rm_nodes.get(), rm_nodes_head, utility::bind_back(node_controller::del, allocator));
+
+        return root;
+    }
+
     auto sorted_del(model::Node * root, 
                     const std::vector<key_type>& keys,
                     memory::Allocatable& allocator) -> model::Node *{
@@ -863,8 +915,7 @@ namespace dg::avl_fastmap{
     //existing keys within (MINIMUM_KEY, MAXIMUM_KEY)
     void sorted_find(model::Node * root, 
                      const std::vector<key_type>& keys,
-                     std::vector<mapped_type>& vals,
-                     memory::CharLaunderable& launderer){
+                     std::vector<mapped_type>& vals){
         
         auto sz         = keys.size() + 1;
         auto nodes      = std::make_unique<std::add_pointer_t<model::Node>[]>(sz);
@@ -878,25 +929,24 @@ namespace dg::avl_fastmap{
             crud::find(root, kkeys_ptr, nodes_ptr, constants::MINIMUM_KEY, constants::MAXIMUM_KEY);
         }
         
-        std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), utility::bind_back(node_controller::extract_val, launderer));
+        std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), node_controller::extract_val);
     }
 
     void std_sorted_find(model::Node * root, 
                          const std::vector<key_type>& keys, 
-                         std::vector<std::optional<mapped_type>>& vals, 
-                         memory::CharLaunderable& launderer){
+                         std::vector<std::optional<mapped_type>>& vals){
         
         auto nodes      = std::make_unique<std::add_pointer_t<model::Node>[]>(keys.size());
         auto nodes_ptr  = nodes.get();
         crud::nullable_find(root, keys.data(), keys.data() + keys.size(), nodes_ptr);
-        std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), utility::bind_back(node_controller::nullable_extract_val, launderer));
+        std::transform(nodes.get(), nodes.get() + keys.size(), std::back_inserter(vals), node_controller::nullable_extract_val);
     }
 
     template <class Visitor>
-    auto visit(model::Node * root, Visitor visitor, memory::CharLaunderable& launderer, traversal_order_type traversal_order = preorder) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
+    auto visit(model::Node * root, Visitor visitor, traversal_order_type traversal_order = preorder) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
 
-        auto liaison = [visitor, &launderer](model::Node * root) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
-            visitor(root->k, node_controller::extract_val(root, launderer));
+        auto liaison = [visitor](model::Node * root) noexcept(noexcept(visitor(std::declval<key_type>(), std::declval<mapped_type>()))){
+            visitor(root->k, node_controller::extract_val(root));
         };
 
         switch (traversal_order){
@@ -915,9 +965,9 @@ namespace dg::avl_fastmap{
         }
     } 
 
-    auto begin(model::Node * root, memory::CharLaunderable& launderer) noexcept -> inorder_iterator::iterator{
+    auto begin(model::Node * root) noexcept -> inorder_iterator::iterator{
 
-        return inorder_iterator::begin(root, launderer);
+        return inorder_iterator::begin(root);
     }
 
     auto end() noexcept -> inorder_iterator::iterator{

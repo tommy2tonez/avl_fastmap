@@ -1,5 +1,7 @@
 {
     "files.associations": {
+        "type_traits": "cpp",
+        "vector": "cpp",
         "algorithm": "cpp",
         "array": "cpp",
         "atomic": "cpp",
@@ -11,6 +13,7 @@
         "cmath": "cpp",
         "compare": "cpp",
         "concepts": "cpp",
+        "coroutine": "cpp",
         "cstddef": "cpp",
         "cstdint": "cpp",
         "cstdio": "cpp",
@@ -18,6 +21,7 @@
         "cstring": "cpp",
         "ctime": "cpp",
         "cwchar": "cpp",
+        "deque": "cpp",
         "exception": "cpp",
         "format": "cpp",
         "forward_list": "cpp",
@@ -39,9 +43,9 @@
         "numeric": "cpp",
         "optional": "cpp",
         "ostream": "cpp",
+        "queue": "cpp",
         "random": "cpp",
         "ratio": "cpp",
-        "set": "cpp",
         "sstream": "cpp",
         "stdexcept": "cpp",
         "stop_token": "cpp",
@@ -50,12 +54,9 @@
         "system_error": "cpp",
         "thread": "cpp",
         "tuple": "cpp",
-        "type_traits": "cpp",
         "typeinfo": "cpp",
         "unordered_map": "cpp",
-        "unordered_set": "cpp",
         "utility": "cpp",
-        "vector": "cpp",
         "xfacet": "cpp",
         "xhash": "cpp",
         "xiosbase": "cpp",
@@ -72,5 +73,34 @@
         "xtr1common": "cpp",
         "xtree": "cpp",
         "xutility": "cpp"
+    },
+
+    "terminal.integrated.profiles.windows": {
+      "PowerShell": {
+        "source": "PowerShell",
+        "icon": "terminal-powershell"
+      },
+      "Command Prompt": {
+        "path": [
+          "${env:windir}\\Sysnative\\cmd.exe",
+          "${env:windir}\\System32\\cmd.exe"
+        ],
+        "args": [],
+        "icon": "terminal-cmd"
+      },
+      "Git Bash": {
+        "source": "Git Bash"
+      },
+      "MSYS2": {
+        "path": "C:\\msys64\\usr\\bin\\bash.exe",
+        "args": [
+          "--login",
+          "-i"
+        ],
+        "env": {
+          "MSYSTEM": "MINGW64",
+          "CHERE_INVOKING": "1"
+        }
+      }
     }
 }
