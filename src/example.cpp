@@ -177,7 +177,7 @@ int main(){
     auto mmap           = std::unordered_map<uint64_t, std::pair<const char *, uint32_t>>{}; 
     auto root           = make();
 
-    while (data.size() > 1){
+    while (true){
 
         if (data.size() % 2 == 0){
             auto [l, r] = random_split(data);

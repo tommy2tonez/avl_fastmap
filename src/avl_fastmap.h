@@ -384,6 +384,7 @@ namespace dg::avl_fastmap::crud{
         auto key    = std::pair<key_type, bool>{root->k, false};
         auto less   = [](const auto& lhs, const auto& rhs) noexcept{return lhs.first < rhs.first;};
         auto mid    = std::lower_bound(first, last, key, less);
+        auto tmp    = std::add_pointer_t<model::Node>{};
 
         if (mid == last || mid->first != root->k){
             root->l = del(root->l, first, mid, removed_nodes);
@@ -427,7 +428,7 @@ namespace dg::avl_fastmap::crud{
         root->l = del(root->l, first, mid, removed_nodes);
         root->r = del(root->r, std::next(mid), last, removed_nodes);
         basic_operation::update_height_at(root);
-        return del(basic_operation::recursive_balance_at(root), mid->first, mid->second, *(removed_nodes++));
+        return del(basic_operation::recursive_balance_at(root), mid->first, false, tmp);
     }
     
     void nullable_find(model::Node * root, 
